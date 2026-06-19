@@ -5,7 +5,11 @@ export const metadata = {
   description: 'Sistem Operasional Perpustakaan',
 };
 
-export default function RootLayout({ children }) {
+interface RootLayoutProps {
+  children: React.ReactNode;
+}
+
+export default function RootLayout({ children }: RootLayoutProps): React.ReactElement {
   return (
     <html lang="id">
       <body className="antialiased">

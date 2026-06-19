@@ -3,7 +3,17 @@
 import { usePathname, useRouter } from 'next/navigation';
 import { FiHome, FiBook, FiUsers, FiClipboard, FiArrowLeftCircle, FiClock, FiLogOut } from 'react-icons/fi';
 
-const menuItems = [
+// ==================== Types ====================
+
+interface MenuItem {
+  name: string;
+  path: string;
+  icon: React.ComponentType<{ className?: string }>;
+}
+
+// ==================== Constants ====================
+
+const menuItems: MenuItem[] = [
   { name: 'Dashboard', path: '/dashboard', icon: FiHome },
   { name: 'Buku', path: '/dashboard/books', icon: FiBook },
   { name: 'Anggota', path: '/dashboard/members', icon: FiUsers },
@@ -12,11 +22,13 @@ const menuItems = [
   { name: 'Riwayat', path: '/dashboard/history', icon: FiClock },
 ];
 
-export default function Sidebar() {
+// ==================== Component ====================
+
+export default function Sidebar(): React.ReactElement {
   const pathname = usePathname();
   const router = useRouter();
 
-  const handleLogout = () => {
+  const handleLogout = (): void => {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
     router.push('/login');
@@ -41,7 +53,9 @@ export default function Sidebar() {
                 <button
                   onClick={() => router.push(item.path)}
                   className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
-                    isActive ? 'bg-blue-600 text-white' : 'text-slate-300 hover:bg-slate-800'
+                    isActive
+                      ? 'bg-blue-600 text-white'
+                      : 'text-slate-300 hover:bg-slate-800'
                   }`}
                 >
                   <Icon className="text-xl" />

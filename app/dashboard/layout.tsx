@@ -6,7 +6,11 @@ export const metadata = {
   description: 'Dashboard perpustakaan',
 };
 
-export default function DashboardLayout({ children }) {
+interface DashboardLayoutProps {
+  children: React.ReactNode;
+}
+
+export default function DashboardLayout({ children }: DashboardLayoutProps): React.ReactElement {
   return (
     <div className="flex min-h-screen bg-gray-50">
       <Sidebar />
