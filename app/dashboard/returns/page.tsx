@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { FiCheck, FiUser, FiAlertCircle } from 'react-icons/fi';
+import { FiCheck, FiUser, FiAlertCircle, FiInfo } from 'react-icons/fi';
 import api from '@/lib/api';
 import Modal from '@/components/Modal';
 
@@ -39,12 +39,42 @@ interface ReturnsPageState {
   modalMessage: string;
   selectedBorrowing: Borrowing | null;
   returnedBooks: ReturnedBook[];
+  // --- State baru untuk estimasi denda ---
+  estimatedLateDays: number;
+  estimatedTotalFine: number;
+  // --- State baru untuk detail sukses ---
+  successTotalFine: number;
+  successLateDays: number;
 }
 
 // ==================== Helpers ====================
 
 const cn = (...classes: (string | boolean | undefined)[]): string =>
   classes.filter(Boolean).join(' ');
+
+// Fungsi untuk menghitung estimasi denda berdasarkan due_date saat ini
+const calculateFineEstimate = (dueDateStr: string, books: ReturnedBook[]): { days: number; fine: number } => {
+  const dueDate = new Date(dueDateStr);
+  const today = new Date();
+  // Atur ke awal hari untuk perbandingan tanggal
+  dueDate.setHours(0, 0, 0, 0);
+  today.setHours(0, 0, 0, 0);
+
+  const timeDiff = today.getTime() - dueDate.getTime();
+  const daysDiff = Math.ceil(timeDiff / (1000 * 3600 * 24)); // Hari terlambat
+
+  if (daysDiff <= 0) {
+    return { days: 0, fine: 0 };
+  }
+
+  // Tarif denda per buku per hari
+  const dailyFineRate = 1000;
+  // Hitung total jumlah buku
+  const totalQuantity = books.reduce((sum, book) => sum + book.quantity, 0);
+  const estimatedFine = daysDiff * totalQuantity * dailyFineRate;
+
+  return { days: daysDiff, fine: estimatedFine };
+};
 
 // ==================== Main Component ====================
 
@@ -59,6 +89,11 @@ export default function ReturnsPage(): React.ReactElement {
     modalMessage: '',
     selectedBorrowing: null,
     returnedBooks: [],
+    // --- Inisialisasi state baru ---
+    estimatedLateDays: 0,
+    estimatedTotalFine: 0,
+    successTotalFine: 0,
+    successLateDays: 0,
   });
 
   const fetchBorrowings = useCallback(async (): Promise<void> => {
@@ -95,14 +130,21 @@ export default function ReturnsPage(): React.ReactElement {
         const response = await api.get(`/borrowings/${borrowing.borrowing_id}`);
         const details: BookDetail[] = response.data.data.details || [];
 
+        const initialReturnedBooks = details.map((d) => ({
+          book_id: d.book_id,
+          title: d.book_title || d.title || undefined,
+          quantity: d.quantity,
+          condition: 'good' as const,
+        }));
+
+        // Hitung estimasi denda saat modal dibuka
+        const { days, fine } = calculateFineEstimate(borrowing.due_date, initialReturnedBooks);
+
         setState((prev) => ({
           ...prev,
-          returnedBooks: details.map((d) => ({
-            book_id: d.book_id,
-            title: d.book_title || d.title || undefined,
-            quantity: d.quantity,
-            condition: 'good' as const,
-          })),
+          returnedBooks: initialReturnedBooks,
+          estimatedLateDays: days,
+          estimatedTotalFine: fine,
           showModal: true,
         }));
       } catch (error) {
@@ -128,23 +170,34 @@ export default function ReturnsPage(): React.ReactElement {
       try {
         if (!state.selectedBorrowing) return;
 
-        await api.put(`/borrowings/${state.selectedBorrowing.borrowing_id}/return`, {
+        const payload = {
           returned_books: state.returnedBooks.map(({ book_id, quantity, condition }) => ({
             book_id,
             quantity,
             condition,
           })),
-        });
+        };
+
+        const response = await api.put(`/borrowings/${state.selectedBorrowing.borrowing_id}/return`, payload);
+        
         setState((prev) => ({
           ...prev,
           showModal: false,
         }));
         await fetchBorrowings();
+
+        // Ambil detail denda dari response backend
+        const { total_fine, late_days } = response.data.data;
+
+        // Tampilkan modal sukses dengan detail denda
         setState((prev) => ({
           ...prev,
-          modalTitle: 'Sukses Memproses',
-          modalMessage:
-            'Sirkulasi pengembalian buku terdaftar dengan aman ke dalam inventaris.',
+          modalTitle: 'Pengembalian Berhasil',
+          modalMessage: late_days > 0
+            ? `Member terlambat ${late_days} hari. Total denda: Rp ${total_fine.toLocaleString('id-ID')}.`
+            : 'Buku dikembalikan tepat waktu. Tidak ada denda.',
+          successTotalFine: total_fine,
+          successLateDays: late_days,
           showSuccessModal: true,
         }));
       } catch (error) {
@@ -265,6 +318,25 @@ export default function ReturnsPage(): React.ReactElement {
               </span>
             </div>
 
+            {/* --- TAMPILKAN ESTIMASI DENDA DI SINI --- */}
+            <div className={cn(
+              'mb-4 p-3 rounded-lg border',
+              state.estimatedTotalFine > 0 ? 'bg-red-50 border-red-200' : 'bg-green-50 border-green-200'
+            )}>
+              <div className="flex justify-between items-center">
+                <span className="font-medium">Estimasi Denda:</span>
+                <span className={cn(
+                  "font-bold",
+                  state.estimatedTotalFine > 0 ? "text-red-600" : "text-green-600"
+                )}>
+                  {state.estimatedTotalFine > 0 
+                    ? `Rp ${state.estimatedTotalFine.toLocaleString('id-ID')} (${state.estimatedLateDays} Hari Terlambat)`
+                    : 'Bebas Denda / Tepat Waktu'
+                  }
+                </span>
+              </div>
+            </div>
+
             <form onSubmit={handleSubmit} className={cn('space-y-4')}>
               <div>
                 <label className={cn('block text-xs font-bold text-gray-500 uppercase tracking-wide mb-2')}>
@@ -289,9 +361,13 @@ export default function ReturnsPage(): React.ReactElement {
                         onChange={(e) => {
                           const newBooks = [...state.returnedBooks];
                           newBooks[index].condition = e.target.value as 'good' | 'damaged' | 'lost';
+                          // Hitung ulang estimasi jika kondisi buku berubah (opsional, bisa dihapus jika tidak diperlukan)
+                          // const { days, fine } = calculateFineEstimate(state.selectedBorrowing.due_date, newBooks);
                           setState((prev) => ({
                             ...prev,
                             returnedBooks: newBooks,
+                            // estimatedLateDays: days, // Jika ingin update realtime
+                            // estimatedTotalFine: fine, // Jika ingin update realtime
                           }));
                         }}
                         className={cn(
@@ -344,7 +420,10 @@ export default function ReturnsPage(): React.ReactElement {
         onClose={() => setState((prev) => ({ ...prev, showSuccessModal: false }))}
         title={state.modalTitle}
       >
-        {state.modalMessage}
+        <div className="flex items-start gap-3">
+          <FiInfo className="text-blue-500 flex-shrink-0 mt-0.5" size={20} />
+          <p>{state.modalMessage}</p>
+        </div>
       </Modal>
 
       <Modal

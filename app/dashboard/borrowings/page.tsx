@@ -6,6 +6,7 @@ import api from '@/lib/api';
 import BorrowingFormModal from '@/components/BorrowingFormModal';
 import Modal from '@/components/Modal';
 
+
 // ==================== Types ====================
 
 interface Borrowing {
@@ -46,14 +47,12 @@ interface BorrowingDetailBook {
   quantity: number;
 }
 
-// 1. Tipe data kontrak response dari backend API lu
 interface ApiResponse<T> {
   success: boolean;
   message: string;
   data: T;
 }
 
-// 2. Tipe data spesifik untuk response detail peminjaman
 interface BorrowingDetailResponse {
   id: number;
   member_name: string;
@@ -76,6 +75,8 @@ interface BorrowingsPageState {
   showReturnModal: boolean;
   selectedBorrowing: BorrowingDetailResponse | null;
   returnConditions: Record<number, BookCondition>;
+  showDeleteModal: boolean;
+  deleteTargetId: number | null;
 }
 
 // ==================== Helpers ====================
@@ -113,9 +114,10 @@ export default function BorrowingsPage(): React.ReactElement {
     showReturnModal: false,
     selectedBorrowing: null,
     returnConditions: {},
+    showDeleteModal: false,
+    deleteTargetId: null,
   });
 
-  // Menggunakan generic type pada Axios/API instance agar data ber-tipe jelas
   const fetchData = useCallback(async (): Promise<void> => {
     try {
       const [borrowingsRes, membersRes, booksRes] = await Promise.all([
@@ -142,111 +144,114 @@ export default function BorrowingsPage(): React.ReactElement {
     }
   }, []);
 
- useEffect(() => {
-  const loadInitialData = async (): Promise<void> => {
-    try {
-      const [borrowingsRes, membersRes, booksRes] = await Promise.all([
-        api.get<ApiResponse<Borrowing[]>>('/borrowings'),
-        api.get<ApiResponse<Member[]>>('/members'),
-        api.get<ApiResponse<Book[]>>('/books'),
-      ]);
-      setState((prev) => ({
-        ...prev,
-        borrowings: borrowingsRes.data.data,
-        members: membersRes.data.data,
-        books: booksRes.data.data,
-      }));
-    } catch (error) {
-      console.error('Error fetching data:', error);
-      setState((prev) => ({
-        ...prev,
-        errorTitle: 'Gagal Memuat Data',
-        errorMessage: 'Terjadi kesalahan saat mengambil repositori data peminjaman.',
-        showErrorModal: true,
-      }));
-    } finally {
-      setState((prev) => ({ ...prev, loading: false }));
-    }
-  };
+  useEffect(() => {
+    const loadInitialData = async (): Promise<void> => {
+      try {
+        const [borrowingsRes, membersRes, booksRes] = await Promise.all([
+          api.get<ApiResponse<Borrowing[]>>('/borrowings'),
+          api.get<ApiResponse<Member[]>>('/members'),
+          api.get<ApiResponse<Book[]>>('/books'),
+        ]);
+        setState((prev) => ({
+          ...prev,
+          borrowings: borrowingsRes.data.data,
+          members: membersRes.data.data,
+          books: booksRes.data.data,
+        }));
+      } catch (error) {
+        console.error('Error fetching data:', error);
+        setState((prev) => ({
+          ...prev,
+          errorTitle: 'Gagal Memuat Data',
+          errorMessage: 'Terjadi kesalahan saat mengambil repositori data peminjaman.',
+          showErrorModal: true,
+        }));
+      } finally {
+        setState((prev) => ({ ...prev, loading: false }));
+      }
+    };
 
-  void loadInitialData();
-}, []); // Kosongkan dependency jika hanya ingin dieksekusi sekali saat mount
+    void loadInitialData();
+  }, []);
 
   const handleAdd = (): void => {
     setState((prev) => ({ ...prev, showModal: true }));
   };
 
-  const handleDelete = useCallback(
-    async (id: number): Promise<void> => {
-      if (!confirm('Yakin ingin menghapus peminjaman ini?')) return;
-      try {
-        await api.delete(`/borrowings/${id}`);
-        await fetchData();
-      } catch (error) {
-        console.error('Error deleting borrowing:', error);
+  // Hanya buka modal, simpan id target
+  const handleDelete = useCallback((id: number): void => {
+    setState((prev) => ({ ...prev, showDeleteModal: true, deleteTargetId: id }));
+  }, []);
+
+  // Eksekusi delete setelah konfirmasi
+  const handleConfirmDelete = useCallback(async (): Promise<void> => {
+    if (state.deleteTargetId === null) return;
+    setState((prev) => ({ ...prev, showDeleteModal: false }));
+    try {
+      await api.delete(`/borrowings/${state.deleteTargetId}`);
+      await fetchData();
+    } catch (error) {
+      console.error('Error deleting borrowing:', error);
+      setState((prev) => ({
+        ...prev,
+        errorTitle: 'Gagal Menghapus',
+        errorMessage: 'Terjadi kesalahan saat menghapus peminjaman.',
+        showErrorModal: true,
+      }));
+    } finally {
+      setState((prev) => ({ ...prev, deleteTargetId: null }));
+    }
+  }, [state.deleteTargetId, fetchData]);
+
+  const handleModalSubmit = useCallback(
+    async (formData: BorrowingFormData): Promise<void> => {
+      const todayStr = new Date().toISOString().split('T')[0];
+
+      if (formData.due_date && formData.due_date < todayStr) {
         setState((prev) => ({
           ...prev,
-          errorTitle: 'Gagal Menghapus',
-          errorMessage: 'Terjadi kesalahan saat menghapus peminjaman.',
+          errorTitle: 'Tanggal Tidak Valid',
+          errorMessage: 'Tanggal jatuh tempo yang Anda pilih sudah lewat! Silakan pilih tanggal hari ini atau masa depan.',
           showErrorModal: true,
         }));
+        return;
+      }
+
+      setState((prev) => ({ ...prev, modalLoading: true }));
+      try {
+        const payload = {
+          member_id: parseInt(formData.member_id),
+          books: formData.books.map((b) => ({
+            book_id: parseInt(b.book_id),
+            quantity: parseInt(b.quantity.toString()),
+          })),
+          due_date: formData.due_date,
+        };
+
+        await api.post('/borrowings', payload);
+        setState((prev) => ({ ...prev, showModal: false }));
+        await fetchData();
+      } catch (error) {
+        console.error('Error submitting borrowing:', error);
+        const axiosError = error as { response?: { data?: { message?: string } } };
+        const backendMessage = axiosError.response?.data?.message || 'Terjadi gangguan internal sistem saat mendaftarkan peminjaman.';
+
+        setState((prev) => ({
+          ...prev,
+          errorTitle: 'Gagal Menyimpan Transaksi',
+          errorMessage: backendMessage,
+          showErrorModal: true,
+        }));
+      } finally {
+        setState((prev) => ({ ...prev, modalLoading: false }));
       }
     },
     [fetchData]
   );
 
-const handleModalSubmit = useCallback(
-  async (formData: BorrowingFormData): Promise<void> => {
-    const todayStr = new Date().toISOString().split('T')[0];
-    
-    if (formData.due_date && formData.due_date < todayStr) {
-      setState((prev) => ({
-        ...prev,
-        errorTitle: 'Tanggal Tidak Valid',
-        errorMessage: 'Tanggal jatuh tempo yang Anda pilih sudah lewat! Silakan pilih tanggal hari ini atau masa depan.',
-        showErrorModal: true,
-      }));
-      return;
-    }
-
-    setState((prev) => ({ ...prev, modalLoading: true }));
-    try {
-      const payload = {
-        member_id: parseInt(formData.member_id),
-        books: formData.books.map((b) => ({
-          book_id: parseInt(b.book_id),
-          quantity: parseInt(b.quantity.toString()),
-        })),
-        due_date: formData.due_date,
-      };
-
-      await api.post('/borrowings', payload);
-      setState((prev) => ({ ...prev, showModal: false }));
-      await fetchData();
-    } catch (error) { // 🛠️ Biarkan default 'unknown', jangan ketik ': any'
-      console.error('Error submitting borrowing:', error);
-      
-      // 🛠️ Solusi Aman: Lakukan type assertion ke bentuk objek Axios secara spesifik tanpa 'any'
-      const axiosError = error as { response?: { data?: { message?: string } } };
-      const backendMessage = axiosError.response?.data?.message || 'Terjadi gangguan internal sistem saat mendaftarkan peminjaman.';
-      
-      setState((prev) => ({
-        ...prev,
-        errorTitle: 'Gagal Menyimpan Transaksi',
-        errorMessage: backendMessage,
-        showErrorModal: true,
-      }));
-    } finally {
-      setState((prev) => ({ ...prev, modalLoading: false }));
-    }
-  },
-  [fetchData]
-);
-
   const handleOpenReturnModal = async (id: number) => {
     setState((prev) => ({ ...prev, modalLoading: true }));
     try {
-      // Mengirimkan interface tipe balikan spesifik dari endpoint detail
       const response = await api.get<ApiResponse<BorrowingDetailResponse>>(`/borrowings/${id}`);
       const borrowingData = response.data.data;
 
@@ -281,12 +286,11 @@ const handleModalSubmit = useCallback(
         })),
       };
 
-      // Opsional jika ada model data spesifik untuk return payload, tapi data general aman
       const res = await api.put<{ data: { total_fine: number; late_days: number } }>(
-        `/borrowings/${state.selectedBorrowing.id}/return`, 
+        `/borrowings/${state.selectedBorrowing.id}/return`,
         payload
       );
-      
+
       setState((prev) => ({ ...prev, showReturnModal: false }));
       await fetchData();
 
@@ -314,7 +318,7 @@ const handleModalSubmit = useCallback(
   };
 
   const totalBooksCount = state.selectedBorrowing?.details.reduce((acc, curr) => acc + curr.quantity, 0) || 0;
-  const visualFine = state.selectedBorrowing 
+  const visualFine = state.selectedBorrowing
     ? calculateEstimatedFine(state.selectedBorrowing.due_date, totalBooksCount)
     : { days: 0, fine: 0 };
 
@@ -403,7 +407,7 @@ const handleModalSubmit = useCallback(
                       </button>
                     )}
                     <button
-                      onClick={() => void handleDelete(borrowing.borrowing_id)}
+                      onClick={() => handleDelete(borrowing.borrowing_id)}
                       className={cn('p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition-colors')}
                       title="Hapus Peminjaman"
                     >
@@ -417,6 +421,7 @@ const handleModalSubmit = useCallback(
         </table>
       </div>
 
+      {/* MODAL FORM TAMBAH PEMINJAMAN */}
       <BorrowingFormModal
         isOpen={state.showModal}
         onClose={() => setState((prev) => ({ ...prev, showModal: false }))}
@@ -426,24 +431,64 @@ const handleModalSubmit = useCallback(
         loading={state.modalLoading}
       />
 
+      {/* MODAL KONFIRMASI HAPUS */}
+      <Modal
+        isOpen={state.showDeleteModal}
+        onClose={() => setState((prev) => ({ ...prev, showDeleteModal: false, deleteTargetId: null }))}
+        title="Konfirmasi Hapus"
+      >
+        <div className="space-y-5">
+          {/* Icon */}
+          <div className="flex justify-center">
+            <div className="w-16 h-16 rounded-full bg-red-100 flex items-center justify-center">
+              <FiTrash2 size={28} className="text-red-600" />
+            </div>
+          </div>
+
+          {/* Pesan */}
+          <div className="text-center space-y-1">
+            <p className="text-sm text-gray-600">
+              Tindakan ini <span className="font-semibold text-gray-800">tidak dapat dibatalkan</span>.
+              Yakin ingin menghapus data peminjaman ini?
+            </p>
+          </div>
+
+          {/* Tombol */}
+          <div className="flex gap-3 pt-1">
+            <button
+              onClick={() => setState((prev) => ({ ...prev, showDeleteModal: false, deleteTargetId: null }))}
+              className="flex-1 px-4 py-2.5 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors"
+            >
+              Batal
+            </button>
+            <button
+              onClick={() => void handleConfirmDelete()}
+              className="flex-1 px-4 py-2.5 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700 active:scale-[0.98] transition-all"
+            >
+              Ya, Hapus
+            </button>
+          </div>
+        </div>
+      </Modal>
+
       {/* MODAL KONFIRMASI PENGEMBALIAN & DENDA */}
-      <Modal 
-        isOpen={state.showReturnModal} 
-        onClose={() => setState((prev) => ({ ...prev, showReturnModal: false }))} 
+      <Modal
+        isOpen={state.showReturnModal}
+        onClose={() => setState((prev) => ({ ...prev, showReturnModal: false }))}
         title="Form Pengembalian & Penilaian Buku"
       >
         <div className="space-y-4 text-sm text-gray-600">
           <div className="bg-gray-50 p-4 rounded-xl space-y-1.5 border border-gray-100">
             <p><strong>Member:</strong> <span className="capitalize">{state.selectedBorrowing?.member_name}</span></p>
             <p><strong>Jatuh Tempo:</strong> {state.selectedBorrowing && new Date(state.selectedBorrowing.due_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}</p>
-            
+
             <div className="pt-2 border-t mt-2 flex justify-between items-center">
               <span className="font-semibold text-gray-700">Estimasi Denda:</span>
               <span className={cn(
-                "font-bold text-base",
-                visualFine.fine > 0 ? "text-red-600" : "text-green-600"
+                'font-bold text-base',
+                visualFine.fine > 0 ? 'text-red-600' : 'text-green-600'
               )}>
-                {visualFine.fine > 0 
+                {visualFine.fine > 0
                   ? `Rp ${visualFine.fine.toLocaleString('id-ID')} (${visualFine.days} Hari Terlambat)`
                   : 'Bebas Denda / Tepat Waktu'
                 }
@@ -460,7 +505,6 @@ const handleModalSubmit = useCallback(
                   <p className="font-medium text-gray-800 line-clamp-1">{book.book_title}</p>
                   <p className="text-xs text-gray-400">Jumlah pinjam: {book.quantity} eks</p>
                 </div>
-                {/* Perubahan as BookCondition untuk mengganti 'as any' */}
                 <select
                   value={state.returnConditions[book.book_id] || 'good'}
                   onChange={(e) => handleConditionChange(book.book_id, e.target.value as BookCondition)}
@@ -484,7 +528,12 @@ const handleModalSubmit = useCallback(
         </div>
       </Modal>
 
-      <Modal isOpen={state.showErrorModal} onClose={() => setState((prev) => ({ ...prev, showErrorModal: false }))} title={state.errorTitle}>
+      {/* MODAL ERROR */}
+      <Modal
+        isOpen={state.showErrorModal}
+        onClose={() => setState((prev) => ({ ...prev, showErrorModal: false }))}
+        title={state.errorTitle}
+      >
         {state.errorMessage}
       </Modal>
     </div>
