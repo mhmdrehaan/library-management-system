@@ -1,7 +1,7 @@
 'use client';
 
 import { usePathname, useRouter } from 'next/navigation';
-import { FiHome, FiBook, FiUsers, FiClipboard, FiArrowLeftCircle, FiClock, FiLogOut } from 'react-icons/fi';
+import { FiHome, FiBook, FiUsers, FiClipboard, FiArrowLeftCircle, FiClock, FiLogOut, FiBarChart2 } from 'react-icons/fi';
 
 // ==================== Types ====================
 
@@ -20,6 +20,7 @@ const menuItems: MenuItem[] = [
   { name: 'Peminjaman', path: '/dashboard/borrowings', icon: FiClipboard },
   { name: 'Pengembalian', path: '/dashboard/returns', icon: FiArrowLeftCircle },
   { name: 'Riwayat', path: '/dashboard/history', icon: FiClock },
+  { name: 'Laporan', path: '/dashboard/reports', icon: FiBarChart2 }, // ← TAMBAHKAN INI
 ];
 
 // ==================== Component ====================
